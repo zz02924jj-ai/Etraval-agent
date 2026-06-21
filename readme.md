@@ -31,6 +31,4 @@
 - 后端：FastAPI + LangChain
 - 前端：Vue 3 + Tailwind CSS
 
-## 源自 SmartVoyage
 
-本项目基于 SmartVoyage v2.0 二次开发，继承其 A2A/MCP 架构设计。
