@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Etraval - 智能旅行助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        .bg-light-blue { background-color: #f0f7ff; }
+        .text-primary-blue { color: #0077cc; }
+        .bg-primary-blue { background-color: #0077cc; }
+        .border-primary-blue { border-color: #0077cc; }
+        .chat-container { height: calc(100vh - 250px); overflow-y: auto; }
+        .message-user { background-color: #0077cc; color: white; border-bottom-right-radius: 0; }
+        .message-assistant { background-color: white; color: #333; border-bottom-left-radius: 0; border: 1px solid #e2e8f0; }
+        .markdown-body pre { background-color: #f8fafc; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; overflow-x: auto; }
+        .agent-tag { background-color: #ede9fe; color: #6d28d9; }
+    </style>
+</head>
+<body class="bg-light-blue font-sans">
+    <div id="app" class="max-w-4xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-8">
+            <div class="flex items-center">
+                <div class="w-12 h-12 bg-primary-blue rounded-lg flex items-center justify-center mr-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-800">Etraval</h1>
+                    <p class="text-sm text-gray-500">多智能体 AI 旅行规划助手</p>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-1">
+                <span v-for="agent in routedAgents" :key="agent" class="agent-tag px-3 py-1 rounded-full text-xs font-medium">
+                    {{ agent }}
+                </span>
+            </div>
+        </header>
+
+        <!-- Chat -->
+        <div class="bg-white rounded-2xl shadow-sm border border-blue-100 overflow-hidden">
+            <div class="chat-container p-6 space-y-6" ref="chatScroll">
+                <!-- Welcome -->
+                <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full text-center space-y-4">
+                    <div class="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-primary-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-semibold text-gray-800">欢迎使用 Etraval</h2>
+                        <p class="text-gray-500 mt-2">AI 多智能体协同，一站式旅行规划</p>
+                        <div class="mt-6 flex flex-wrap justify-center gap-2">
+                            <button @click="quickQuery('北京明天天气如何？')" class="px-4 py-2 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition">🌤 查天气</button>
+                            <button @click="quickQuery('查询明天深圳到广州的高铁票，二等座')" class="px-4 py-2 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition">🚄 查高铁</button>
+                            <button @click="quickQuery('帮我规划一下从深圳去广州的2天行程')" class="px-4 py-2 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition">📋 行程规划</button>
+                            <button @click="quickQuery('深圳最近一周的演唱会')" class="px-4 py-2 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition">🎤 查演出</button>
+                            <button @click="quickQuery('推荐北京的文化景点')" class="px-4 py-2 border border-blue-200 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition">🏛 景点推荐</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Messages -->
+                <div v-for="(msg, index) in messages" :key="index" :class="['flex', msg.role === 'user' ? 'justify-end' : 'justify-start']">
+                    <div :class="['max-w-[80%] px-5 py-3 rounded-2xl whitespace-pre-wrap', msg.role === 'user' ? 'message-user' : 'message-assistant shadow-sm']">
+                        <div v-if="msg.role === 'assistant' && msg.routed" class="text-[10px] text-purple-500 mb-1 font-bold uppercase tracking-wider">
+                            🤖 路由至: {{ msg.routed }}
+                        </div>
+                        <div class="leading-relaxed">{{ msg.content }}</div>
+                    </div>
+                </div>
+
+                <!-- Loading -->
+                <div v-if="loading" class="flex justify-start">
+                    <div class="message-assistant px-5 py-3 rounded-2xl shadow-sm flex items-center space-x-2">
+                        <div class="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
+                        <div class="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                        <div class="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input -->
+            <div class="p-4 border-t border-gray-100 bg-gray-50">
+                <form @submit.prevent="sendMessage" class="flex space-x-4">
+                    <input
+                        v-model="input"
+                        type="text"
+                        placeholder="输入需求：查天气、订票、景点推荐、行程规划..."
+                        class="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition"
+                        :disabled="loading"
+                    >
+                    <button
+                        type="submit"
+                        class="px-6 py-3 bg-primary-blue text-white rounded-xl font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400 transition flex items-center"
+                        :disabled="loading || !input.trim()"
+                    >
+                        <span>发送</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                        </svg>
+                    </button>
+                </form>
+                <div class="mt-2 text-[10px] text-gray-400 text-center">
+                    Powered by Etraval A2A Multi-Agent Network | GLM-4-32B + GLM-4V-9B
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onUpdated, nextTick } = Vue;
+        createApp({
+            setup() {
+                const input = ref('');
+                const loading = ref(false);
+                const messages = ref([]);
+                const conversationHistory = ref('');
+                const routedAgents = ref([]);
+                const chatScroll = ref(null);
+
+                const scrollToBottom = () => {
+                    if (chatScroll.value) {
+                        chatScroll.value.scrollTop = chatScroll.value.scrollHeight;
+                    }
+                };
+
+                const quickQuery = (text) => {
+                    input.value = text;
+                    sendMessage();
+                };
+
+                const sendMessage = async () => {
+                    if (!input.value.trim() || loading.value) return;
+                    const userMessage = input.value;
+                    messages.value.push({ role: 'user', content: userMessage });
+                    input.value = '';
+                    loading.value = true;
+                    await nextTick();
+                    scrollToBottom();
+
+                    try {
+                        const response = await axios.post('http://localhost:8000/chat', {
+                            prompt: userMessage,
+                            conversation_history: conversationHistory.value
+                        });
+                        const data = response.data;
+                        messages.value.push({
+                            role: 'assistant',
+                            content: data.response,
+                            routed: data.routed_agents.join(', ')
+                        });
+                        conversationHistory.value = data.conversation_history;
+                        routedAgents.value = data.routed_agents;
+                    } catch (error) {
+                        messages.value.push({
+                            role: 'assistant',
+                            content: '抱歉，服务出现了一点问题。请检查后端连接或稍后再试。'
+                        });
+                    } finally {
+                        loading.value = false;
+                        await nextTick();
+                        scrollToBottom();
+                    }
+                };
+
+                onUpdated(() => scrollToBottom());
+
+                return { input, loading, messages, routedAgents, chatScroll, sendMessage, quickQuery };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+# =============================================
+# Etraval-agent Docker Compose
+# 基于 SmartVoyage 的 docker-compose.yml 扩展
+# 新增：知识检索 MCP、景点介绍 Agent、多模态视觉 Agent
+# =============================================
+
+services:
+  # ========== 数据库 ==========
+  mysql:
+    image: mysql:8.0
+    container_name: etraval-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_PASSWORD:-12345678}
+      - MYSQL_DATABASE=etraval_agent
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d
+    ports:
+      - "13306:3306"
+    restart: always
+    networks:
+      - etraval-network
+
+  # ========== MCP 数据服务层 ==========
+  mcp-weather:
+    build: .
+    container_name: etraval-mcp-weather
+    command: python mcp_server/mcp_weather_server.py
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-12345678}
+    depends_on:
+      - mysql
+    ports:
+      - "16001:6001"
+    restart: always
+    networks:
+      - etraval-network
+
+  mcp-ticket:
+    build: .
+    container_name: etraval-mcp-ticket
+    command: python mcp_server/mcp_ticket_server.py
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-12345678}
+      - REAL_TICKET_API=false  # false=MySQL虚拟数据, true=真实API
+    depends_on:
+      - mysql
+    ports:
+      - "16002:6002"
+    restart: always
+    networks:
+      - etraval-network
+
+  mcp-knowledge:
+    build: .
+    container_name: etraval-mcp-knowledge
+    command: python mcp_server/mcp_knowledge_server.py
+    environment:
+      - MILVUS_HOST=milvus
+    ports:
+      - "16003:6003"
+    restart: always
+    networks:
+      - etraval-network
+
+  mcp-review:
+    build: .
+    container_name: etraval-mcp-review
+    command: python mcp_server/mcp_review_server.py
+    ports:
+      - "16004:6004"
+    restart: always
+    networks:
+      - etraval-network
+
+  # ========== A2A Agent 层 ==========
+  a2a-router:
+    build: .
+    container_name: etraval-a2a-router
+    command: python a2a_server/router_A2Aagent_Server.py
+    environment:
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_MODEL=${GLM_MODEL:-glm-4-32b}
+    ports:
+      - "16666:6666"
+    restart: always
+    networks:
+      - etraval-network
+
+  a2a-weather:
+    build: .
+    container_name: etraval-a2a-weather
+    command: python a2a_server/weather_server.py
+    environment:
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_MODEL=${GLM_MODEL:-glm-4-32b}
+      - MCP_WEATHER_URL=http://mcp-weather:6001
+    depends_on:
+      - mcp-weather
+    ports:
+      - "15005:5005"
+    restart: always
+    networks:
+      - etraval-network
+
+  a2a-ticket:
+    build: .
+    container_name: etraval-a2a-ticket
+    command: python a2a_server/ticket_server.py
+    environment:
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_MODEL=${GLM_MODEL:-glm-4-32b}
+      - MCP_TICKET_URL=http://mcp-ticket:6002
+    depends_on:
+      - mcp-ticket
+    ports:
+      - "15006:5006"
+    restart: always
+    networks:
+      - etraval-network
+
+  a2a-attraction:
+    build: .
+    container_name: etraval-a2a-attraction
+    command: python a2a_server/attraction_server.py
+    environment:
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_MODEL=${GLM_MODEL:-glm-4-32b}
+      - MCP_KNOWLEDGE_URL=http://mcp-knowledge:6003
+      - MCP_REVIEW_URL=http://mcp-review:6004
+    depends_on:
+      - mcp-knowledge
+      - mcp-review
+    ports:
+      - "15007:5007"
+    restart: always
+    networks:
+      - etraval-network
+
+  a2a-visual:
+    build: .
+    container_name: etraval-a2a-visual
+    command: python a2a_server/visual_server.py
+    environment:
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_4V_MODEL=${GLM_4V_MODEL:-glm-4v-9b}
+    ports:
+      - "15008:5008"
+    restart: always
+    networks:
+      - etraval-network
+
+  # ========== 后端 API ==========
+  backend:
+    build: .
+    container_name: etraval-backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    environment:
+      - GLM_API_KEY=${GLM_API_KEY}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_MODEL=${GLM_MODEL:-glm-4-32b}
+      - WEATHER_AGENT_URL=http://a2a-weather:5005
+      - TICKET_AGENT_URL=http://a2a-ticket:5006
+      - ROUTER_URL=http://a2a-router:6666
+      - A2A_ATTRACTION_URL=http://a2a-attraction:5007
+      - A2A_VISUAL_URL=http://a2a-visual:5008
+    depends_on:
+      - a2a-weather
+      - a2a-ticket
+      - a2a-router
+      - a2a-attraction
+      - a2a-visual
+    ports:
+      - "18000:8000"
+    restart: always
+    networks:
+      - etraval-network
+
+  # ========== 前端 ==========
+  frontend:
+    build: ./frontend
+    container_name: etraval-frontend
+    ports:
+      - "8081:80"
+    depends_on:
+      - backend
+    restart: always
+    networks:
+      - etraval-network
+
+volumes:
+  mysql_data:
+
+networks:
+  etraval-network:
+    name: etraval-network
